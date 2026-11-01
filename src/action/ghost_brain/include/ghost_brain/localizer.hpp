@@ -19,6 +19,7 @@
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include <cstdint>
 
 namespace ghost_brain
 {
@@ -54,6 +55,8 @@ public:
 
 private:
   geometry_msgs::msg::Pose pose_;
+    int64_t last_velocity_time_ns_{0};
+    bool have_velocity_time_{false};
 };
 
 }  // namespace ghost_brain

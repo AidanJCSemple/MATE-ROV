@@ -14,6 +14,7 @@
 
 #include "ghost_brain/ghost_brain_node.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -152,6 +153,8 @@ void GhostBrainNode::on_state(const haunted_house_msgs::msg::GameState & state)
     tracker_.reset();
     path_.clear();
     planned_goal_.reset();
+    target_id_.reset();
+    skipped_ids_.clear();
     RCLCPP_INFO(get_logger(), "New game: back to the start");
   }
   state_ = state;
@@ -166,18 +169,29 @@ void GhostBrainNode::on_detections(const vision_msgs::msg::Detection2DArray & de
   tracker_.on_detections(detections, *depth_, *camera_info_, localizer_.pose());
 }
 
+// Nearest tracked target that has not been skipped. No planning here: update() plans once
+// per replan period and skips a target whose route fails.
 std::optional<TrackedTarget> GhostBrainNode::choose_target() const
 {
+  if (!map_) {
+    return std::nullopt;
+  }
+
   const auto here = localizer_.pose().position;
   std::optional<TrackedTarget> best;
   double best_distance = std::numeric_limits<double>::infinity();
+
   for (const auto & target : tracker_.targets()) {
+    if (std::find(skipped_ids_.begin(), skipped_ids_.end(), target.id) != skipped_ids_.end()) {
+      continue;
+    }
     const double d = distance(here, target.position);
     if (d < best_distance) {
       best = target;
       best_distance = d;
     }
   }
+
   return best;
 }
 
@@ -192,20 +206,80 @@ void GhostBrainNode::update()
     return;
   }
 
-  // TODO(hackathon): with nothing in sight, the ghost could look around, or go exploring
-  const auto target = choose_target();
+  const auto here = localizer_.pose().position;
+
+  // Keep the committed target while its track still exists
+  std::optional<TrackedTarget> target;
+  if (target_id_) {
+    for (const auto & tracked : tracker_.targets()) {
+      if (tracked.id == *target_id_) {
+        target = tracked;
+        break;
+      }
+    }
+    if (!target) {
+      target_id_.reset();
+      planned_goal_.reset();
+    }
+  }
+
+  // Treat a target as reached once we are close to it, and move on
+  if (target && distance(here, target->position) < 0.4) {
+    skipped_ids_.push_back(target->id);
+    target_id_.reset();
+    planned_goal_.reset();
+    path_.clear();
+    target.reset();
+  }
+
+  // No commitment: pick a new one
   if (!target) {
-    publish_command(geometry_msgs::msg::Twist{});
+    target = choose_target();
+    if (target) {
+      target_id_ = target->id;
+      planned_goal_.reset();  // forces a plan below
+    }
+  }
+
+  // TODO(hackathon): with nothing in sight, the ghost could look around, or go exploring
+  if (!target) {
+    geometry_msgs::msg::Twist search_command;
+    search_command.angular.z = 0.5;
+    publish_command(search_command);
+
+    path_.clear();
+    planned_goal_.reset();
+    publish_path();
     publish_markers(target);
     return;
   }
 
-  // Plan again for a new target, and now and then anyway, because people keep walking
-  const bool new_goal = !planned_goal_ || distance(*planned_goal_, target->position) > 0.5;
+  // Plan for a new target, and now and then anyway, because people keep walking
+  const bool new_goal = !planned_goal_;
   if (new_goal || now() - last_plan_time_ >= replan_period_) {
-    path_ = planner_.plan(localizer_.pose().position, target->position, *map_);
-    planned_goal_ = target->position;
+    path_ = planner_.plan(here, target->position, *map_);
+
+    RCLCPP_INFO(
+      get_logger(),
+      "Plan: id=%d here=(%.2f, %.2f, %.2f), goal=(%.2f, %.2f, %.2f), points=%zu",
+      target->id, here.x, here.y, here.z,
+      target->position.x, target->position.y, target->position.z,
+      path_.size());
+
     last_plan_time_ = now();
+
+    if (path_.empty()) {
+      // Unreachable (or the endpoints were rejected): give up on this one
+      skipped_ids_.push_back(target->id);
+      target_id_.reset();
+      planned_goal_.reset();
+      publish_path();
+      publish_command(geometry_msgs::msg::Twist{});
+      publish_markers(std::nullopt);
+      return;
+    }
+
+    planned_goal_ = target->position;
     publish_path();
   }
 
@@ -329,6 +403,8 @@ void GhostBrainNode::release_resources()
   camera_info_.reset();
   path_.clear();
   planned_goal_.reset();
+  target_id_.reset();
+  skipped_ids_.clear();
 }
 
 }  // namespace ghost_brain

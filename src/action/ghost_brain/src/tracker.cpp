@@ -16,6 +16,7 @@
 
 #include <cstring>
 #include <limits>
+#include <cmath>
 
 namespace ghost_brain
 {
@@ -41,11 +42,92 @@ void Tracker::on_detections(
   const sensor_msgs::msg::CameraInfo & camera_info,
   const geometry_msgs::msg::Pose & ghost_pose)
 {
-  // TODO(hackathon): work out where each detection is in the map, and keep track of them in targets_
-  (void)detections;
-  (void)depth;
-  (void)camera_info;
-  (void)ghost_pose;
+  const double fx = camera_info.k[0];
+  const double fy = camera_info.k[4];
+  const double cx = camera_info.k[2];
+  const double cy = camera_info.k[5];
+
+  if (fx <= 0.0 || fy <= 0.0) {
+    return;
+  }
+
+  for (const auto & detection : detections.detections) {
+    if (detection.results.empty()) {
+      continue;
+    }
+
+    const auto & label = detection.results[0].hypothesis.class_id;
+    if (label != "person" && label != "candy") {
+      continue;
+    }
+
+    const double u = detection.bbox.center.position.x;
+    const double v = detection.bbox.center.position.y;
+
+    const double camera_z = depth_at(
+      depth,
+      static_cast<int>(std::round(u)),
+      static_cast<int>(std::round(v)));
+
+    if (!std::isfinite(camera_z) || camera_z <= 0.0) {
+      continue;
+    }
+
+    const double camera_x = (u - cx) * camera_z / fx;
+    const double camera_y = (v - cy) * camera_z / fy;
+
+    const double ghost_x = camera_z + kCameraForward;
+    const double ghost_y = -camera_x + kCameraLeft;
+    const double ghost_z = -camera_y + kCameraUp;
+
+    const auto & q = ghost_pose.orientation;
+    const double yaw = std::atan2(
+      2.0 * (q.w * q.z + q.x * q.y),
+      1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+
+    TrackedTarget target;
+    target.position.x =
+      ghost_pose.position.x +
+      ghost_x * std::cos(yaw) - ghost_y * std::sin(yaw);
+
+    target.position.y =
+      ghost_pose.position.y +
+      ghost_x * std::sin(yaw) + ghost_y * std::cos(yaw);
+
+    target.position.z = ghost_pose.position.z + ghost_z;
+
+    target.is_person = (label == "person");
+    target.last_seen = rclcpp::Time(detections.header.stamp);
+
+    constexpr double match_distance = 0.6;
+
+    TrackedTarget * closest = nullptr;
+    double closest_distance_squared = match_distance * match_distance;
+
+    for (auto & existing : targets_) {
+      if (existing.is_person != target.is_person) {
+        continue;
+      }
+
+      const double dx = existing.position.x - target.position.x;
+      const double dy = existing.position.y - target.position.y;
+      const double dz = existing.position.z - target.position.z;
+      const double distance_squared = dx * dx + dy * dy + dz * dz;
+
+      if (distance_squared < closest_distance_squared) {
+        closest = &existing;
+        closest_distance_squared = distance_squared;
+      }
+    }
+
+    if (closest != nullptr) {
+      closest->position = target.position;
+      closest->last_seen = target.last_seen;
+    } else {
+      target.id = next_id_++;  // NEW: give the new track its own ID
+      targets_.push_back(target);
+    }
+  }
 }
 
 }  // namespace ghost_brain

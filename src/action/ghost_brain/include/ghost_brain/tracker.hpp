@@ -32,6 +32,7 @@ struct TrackedTarget
   geometry_msgs::msg::Point position;
   bool is_person{false};
   rclcpp::Time last_seen;
+  int id{-1};  // NEW: unique per track, assigned when the track is created
 };
 
 /// Where the camera sits on the ghost: this far forward, left and up from its center (m)
@@ -87,6 +88,7 @@ public:
 
 private:
   std::vector<TrackedTarget> targets_;
+  int next_id_{0};  // NEW: the ID given to the next new track
 };
 
 }  // namespace ghost_brain

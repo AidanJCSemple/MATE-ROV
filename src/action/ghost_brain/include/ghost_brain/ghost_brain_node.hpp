@@ -17,6 +17,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>  // NEW
 
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
@@ -103,6 +104,8 @@ private:
   Controller controller_;
   Path path_;
   std::optional<geometry_msgs::msg::Point> planned_goal_;
+  std::optional<int> target_id_;     // NEW: ID of the track we are committed to
+  std::vector<int> skipped_ids_;     // NEW: tracks we reached or could not route to
   rclcpp::Time last_plan_time_;
 
   rclcpp::TimerBase::SharedPtr timer_;
