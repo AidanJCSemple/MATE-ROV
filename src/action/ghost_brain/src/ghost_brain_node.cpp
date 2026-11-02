@@ -68,6 +68,11 @@ GhostBrainNode::CallbackReturn GhostBrainNode::on_configure(const rclcpp_lifecyc
   // The house publishes these once and keeps them for anyone who joins later
   const auto latched = rclcpp::QoS(1).transient_local();
   map_sub_ = create_subscription<OccupancyGrid>("map", latched, [this](const OccupancyGrid & msg) { map_ = msg; });
+    obstacles_sub_ = create_subscription<haunted_house_msgs::msg::BoxArray>(
+    "haunted_house/obstacles", latched,
+    [this](const haunted_house_msgs::msg::BoxArray & msg) {
+      obstacles_ = msg;
+    });
   start_sub_ = create_subscription<PoseStamped>("haunted_house/start_pose", latched, [this](const PoseStamped & msg) {
     if (!start_pose_) {
       localizer_.reset(msg.pose);
@@ -133,6 +138,8 @@ GhostBrainNode::CallbackReturn GhostBrainNode::on_cleanup(const rclcpp_lifecycle
 {
   release_resources();
   RCLCPP_INFO(get_logger(), "Cleaned up");
+  obstacles_sub_.reset();
+  obstacles_.reset();
   return CallbackReturn::SUCCESS;
 }
 

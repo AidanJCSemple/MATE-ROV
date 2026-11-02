@@ -18,6 +18,7 @@
 
 #include "geometry_msgs/msg/point.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
+#include "haunted_house_msgs/msg/box_array.hpp"
 
 namespace ghost_brain
 {
@@ -47,7 +48,18 @@ bool is_occupied(const nav_msgs::msg::OccupancyGrid & map, double x, double y);
  *  - Go 3D: /haunted_house/obstacles lists every wall and piece of furniture as a 3D box, and
  *    a lot of furniture can be flown over or under
  */
-class Planner
+
+bool sphere_hits_box(
+  const geometry_msgs::msg::Point & center,
+  double radius,
+  const haunted_house_msgs::msg::Box & box);
+
+bool segment_hits_box(
+  const geometry_msgs::msg::Point & start,
+  const geometry_msgs::msg::Point & end,
+  double radius,
+  const haunted_house_msgs::msg::Box & box);
+  class Planner
 {
 public:
   /// @return the route from start to goal, or an empty path if there is none
@@ -55,6 +67,11 @@ public:
     const geometry_msgs::msg::Point & start,
     const geometry_msgs::msg::Point & goal,
     const nav_msgs::msg::OccupancyGrid & map) const;
+  Path plan_3d(
+    const geometry_msgs::msg::Point & start,
+    const geometry_msgs::msg::Point & goal,
+    const nav_msgs::msg::OccupancyGrid & map,
+    const haunted_house_msgs::msg::BoxArray & obstacles) const;
 };
 
 }  // namespace ghost_brain

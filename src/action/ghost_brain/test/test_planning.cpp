@@ -149,4 +149,126 @@ TEST_CASE("The controller flies toward the route", "[.hackathon]")
     const auto twist = controller.compute_velocity(pose_at(1.0, 1.0, 1.5, M_PI), path);
     REQUIRE((twist.angular.z != 0.0 || twist.linear.x < 0.0));
   }
+
+
+}
+  TEST_CASE("Sphere collision checks account for obstacle height", "[planning]")
+{
+  haunted_house_msgs::msg::Box table;
+  table.min = point(0.0, 0.0, 0.0);
+  table.max = point(1.0, 1.0, 0.8);
+
+  REQUIRE(ghost_brain::sphere_hits_box(
+    point(0.5, 0.5, 1.0), 0.3, table));
+
+  REQUIRE_FALSE(ghost_brain::sphere_hits_box(
+    point(0.5, 0.5, 1.2), 0.3, table));
+
+  REQUIRE(ghost_brain::sphere_hits_box(
+    point(0.5, 0.5, 0.4), 0.3, table));
+
+  REQUIRE_FALSE(ghost_brain::sphere_hits_box(
+    point(1.4, 0.5, 0.4), 0.3, table));
+
+  haunted_house_msgs::msg::Box chandelier;
+  chandelier.min = point(0.0, 0.0, 2.0);
+  chandelier.max = point(1.0, 1.0, 2.5);
+
+  REQUIRE_FALSE(ghost_brain::sphere_hits_box(
+    point(0.5, 0.5, 1.6), 0.3, chandelier));
+}
+TEST_CASE("Movement segments cannot cross obstacles", "[planning]")
+{
+  haunted_house_msgs::msg::Box obstacle;
+  obstacle.min = point(0.0, 0.0, 0.0);
+  obstacle.max = point(1.0, 1.0, 0.8);
+
+  // Both endpoints are clear, but the movement crosses the box.
+  REQUIRE(ghost_brain::segment_hits_box(
+    point(-1.0, 0.5, 0.4), point(2.0, 0.5, 0.4),
+    0.3, obstacle));
+
+  // The same movement above the box has enough clearance.
+  REQUIRE_FALSE(ghost_brain::segment_hits_box(
+    point(-1.0, 0.5, 1.2), point(2.0, 0.5, 1.2),
+    0.3, obstacle));
+
+  // Climbing through the box is also blocked.
+  REQUIRE(ghost_brain::segment_hits_box(
+    point(0.5, 0.5, -0.5), point(0.5, 0.5, 1.5),
+    0.3, obstacle));
+}
+TEST_CASE("3D planner reaches above furniture and approaches floor candy", "[planning]")
+{
+  Planner planner;
+
+  OccupancyGrid map;
+  map.info.resolution = 0.1;
+  map.info.width = 40;
+  map.info.height = 40;
+  map.info.origin.orientation.w = 1.0;
+  map.data.assign(40 * 40, 0);
+
+  haunted_house_msgs::msg::BoxArray obstacles;
+  haunted_house_msgs::msg::Box table;
+  table.min = point(1.0, 1.0, 0.0);
+  table.max = point(3.0, 3.0, 0.8);
+  obstacles.boxes.push_back(table);
+
+  // The 2D map marks the table's entire footprint as occupied.
+  for (int row = 10; row < 30; ++row) {
+    for (int col = 10; col < 30; ++col) {
+      map.data[row * 40 + col] = 100;
+    }
+  }
+
+  const Point start = point(0.5, 2.0, 0.5);
+
+  SECTION("Candy above the table")
+  {
+    const Point goal = point(2.0, 2.0, 1.15);
+    const Path path = planner.plan_3d(start, goal, map, obstacles);
+
+    REQUIRE_FALSE(path.empty());
+    REQUIRE(distance(path.front(), start) < 1e-6);
+    REQUIRE(distance(path.back(), goal) <= 0.4);
+
+    for (const auto & p : path) {
+      REQUIRE(p.z >= 0.31);
+      REQUIRE(p.z <= 2.69);
+      REQUIRE_FALSE(ghost_brain::sphere_hits_box(p, 0.31, table));
+    }
+
+    for (size_t i = 1; i < path.size(); ++i) {
+      REQUIRE_FALSE(ghost_brain::segment_hits_box(
+        path[i - 1], path[i], 0.31, table));
+    }
+
+    REQUIRE(path.back().z > table.max.z + 0.3);
+  }
+
+  SECTION("Floor candy can be collected without entering the floor")
+  {
+    const Point goal = point(0.6, 0.6, 0.05);
+    const Path path = planner.plan_3d(start, goal, map, obstacles);
+
+    REQUIRE_FALSE(path.empty());
+    REQUIRE(distance(path.back(), goal) <= 0.4);
+
+    for (const auto & p : path) {
+      REQUIRE(p.z >= 0.31);
+      REQUIRE_FALSE(ghost_brain::sphere_hits_box(p, 0.31, table));
+    }
+
+    for (size_t i = 1; i < path.size(); ++i) {
+      REQUIRE_FALSE(ghost_brain::segment_hits_box(
+        path[i - 1], path[i], 0.31, table));
+    }
+  }
+
+  SECTION("A target deep inside solid furniture is unreachable")
+  {
+    const Point goal = point(2.0, 2.0, 0.4);
+    REQUIRE(planner.plan_3d(start, goal, map, obstacles).empty());
+  }
 }

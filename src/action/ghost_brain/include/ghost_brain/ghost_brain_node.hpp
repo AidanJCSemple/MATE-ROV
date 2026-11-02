@@ -38,6 +38,7 @@
 #include "tf2_ros/transform_broadcaster.hpp"
 #include "vision_msgs/msg/detection2_d_array.hpp"
 #include "visualization_msgs/msg/marker_array.hpp"
+#include "haunted_house_msgs/msg/box_array.hpp"
 
 namespace ghost_brain
 {
@@ -93,6 +94,7 @@ private:
   // What the ghost knows
   std::optional<geometry_msgs::msg::PoseStamped> start_pose_;
   std::optional<nav_msgs::msg::OccupancyGrid> map_;
+    std::optional<haunted_house_msgs::msg::BoxArray> obstacles_;
   std::optional<haunted_house_msgs::msg::GameState> state_;
   std::optional<sensor_msgs::msg::Image> depth_;
   std::optional<sensor_msgs::msg::CameraInfo> camera_info_;
@@ -123,6 +125,7 @@ private:
   rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
   rclcpp_lifecycle::LifecyclePublisher<visualization_msgs::msg::MarkerArray>::SharedPtr markers_pub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+  rclcpp::Subscription<haunted_house_msgs::msg::BoxArray>::SharedPtr obstacles_sub_;
 };
 
 }  // namespace ghost_brain
