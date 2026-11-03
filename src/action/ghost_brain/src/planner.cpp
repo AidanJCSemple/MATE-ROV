@@ -14,12 +14,15 @@
 
 #include "ghost_brain/planner.hpp"
 
-#include <cmath>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
-#include <queue>
-#include <vector>
+#include <functional>
 #include <iostream>
+#include <limits>
+#include <queue>
+#include <utility>
+#include <vector>
 
 namespace ghost_brain
 {
@@ -34,6 +37,7 @@ bool is_occupied(const nav_msgs::msg::OccupancyGrid & map, double x, double y)
   }
   return map.data[row * map.info.width + col] != 0;
 }
+
 bool sphere_hits_box(
   const geometry_msgs::msg::Point & center,
   double radius,
@@ -110,7 +114,7 @@ Path Planner::plan(
   const int height = static_cast<int>(map.info.height);
 
   if (!std::isfinite(resolution) || resolution <= 0.0 ||
-      width <= 0 || height <= 0)
+    width <= 0 || height <= 0)
   {
     return {};
   }
@@ -126,26 +130,26 @@ Path Planner::plan(
   const double origin_y = map.info.origin.position.y;
 
   const auto to_cell = [&](double x, double y, int & col, int & row) {
-    const double grid_x = (x - origin_x) / resolution;
-    const double grid_y = (y - origin_y) / resolution;
+      const double grid_x = (x - origin_x) / resolution;
+      const double grid_y = (y - origin_y) / resolution;
 
-    if (!std::isfinite(grid_x) || !std::isfinite(grid_y) ||
+      if (!std::isfinite(grid_x) || !std::isfinite(grid_y) ||
         grid_x < 0.0 || grid_y < 0.0 ||
         grid_x >= width || grid_y >= height)
-    {
-      return false;
-    }
+      {
+        return false;
+      }
 
-    col = static_cast<int>(std::floor(grid_x));
-    row = static_cast<int>(std::floor(grid_y));
-    return true;
-  };
+      col = static_cast<int>(std::floor(grid_x));
+      row = static_cast<int>(std::floor(grid_y));
+      return true;
+    };
 
   int start_col, start_row;
   int goal_col, goal_row;
 
   if (!to_cell(start.x, start.y, start_col, start_row) ||
-      !to_cell(goal.x, goal.y, goal_col, goal_row))
+    !to_cell(goal.x, goal.y, goal_col, goal_row))
   {
     return {};
   }
@@ -165,23 +169,23 @@ Path Planner::plan(
 
       // Keep the whole ghost within the map.
       if (center_x <= ghost_radius ||
-          center_y <= ghost_radius ||
-          width * resolution - center_x <= ghost_radius ||
-          height * resolution - center_y <= ghost_radius)
+        center_y <= ghost_radius ||
+        width * resolution - center_x <= ghost_radius ||
+        height * resolution - center_y <= ghost_radius)
       {
         blocked[index] = true;
         continue;
       }
 
       for (int dr = -clearance_cells;
-           dr <= clearance_cells && !blocked[index]; ++dr)
+        dr <= clearance_cells && !blocked[index]; ++dr)
       {
         for (int dc = -clearance_cells; dc <= clearance_cells; ++dc) {
           const int obstacle_col = col + dc;
           const int obstacle_row = row + dr;
 
           if (obstacle_col < 0 || obstacle_row < 0 ||
-              obstacle_col >= width || obstacle_row >= height)
+            obstacle_col >= width || obstacle_row >= height)
           {
             continue;
           }
@@ -247,7 +251,7 @@ Path Planner::plan(
       const int next_row = row + row_steps[direction];
 
       if (next_col < 0 || next_row < 0 ||
-          next_col >= width || next_row >= height)
+        next_col >= width || next_row >= height)
       {
         continue;
       }
@@ -264,7 +268,7 @@ Path Planner::plan(
     }
   }
 
-    if (parent[goal_index] == cell_count) {
+  if (parent[goal_index] == cell_count) {
     std::cerr << "Planner: safe endpoints, but no connecting route\n";
     return {};
   }
@@ -312,83 +316,82 @@ Path Planner::plan_3d(
   const nav_msgs::msg::OccupancyGrid & map,
   const haunted_house_msgs::msg::BoxArray & obstacles) const
 {
+  using geometry_msgs::msg::Point;
+
   constexpr double radius = 0.3;
   constexpr double margin = 0.01;
+  constexpr double clear_radius = radius + margin;
+  constexpr double eps = 1e-6;
 
   // The documented house has its floor at 0 m and ceiling at 3 m.
-  constexpr double min_z = radius + margin;
-  constexpr double max_z = 3.0 - radius - margin;
+  constexpr double min_z = clear_radius + eps;
+  constexpr double max_z = 3.0 - clear_radius - eps;
 
   if (!std::isfinite(map.info.resolution) ||
-      map.info.resolution <= 0.0 ||
-      map.info.width == 0 || map.info.height == 0)
+    map.info.resolution <= 0.0 ||
+    map.info.width == 0 || map.info.height == 0)
   {
     return {};
   }
 
   // A coarser search grid keeps the 3D search manageable.
-  const double step = std::max(
-    0.2, static_cast<double>(map.info.resolution));
+  const double step = std::max(0.2, static_cast<double>(map.info.resolution));
 
-  const double min_x = map.info.origin.position.x + radius + margin;
-  const double min_y = map.info.origin.position.y + radius + margin;
-
+  const double min_x = map.info.origin.position.x + clear_radius + eps;
+  const double min_y = map.info.origin.position.y + clear_radius + eps;
   const double max_x = map.info.origin.position.x +
-    map.info.width * map.info.resolution - radius - margin;
+    map.info.width * map.info.resolution - clear_radius - eps;
   const double max_y = map.info.origin.position.y +
-    map.info.height * map.info.resolution - radius - margin;
+    map.info.height * map.info.resolution - clear_radius - eps;
 
-  const auto position_clear = [&](const geometry_msgs::msg::Point & p) {
-    if (!std::isfinite(p.x) || !std::isfinite(p.y) ||
-        !std::isfinite(p.z) ||
-        p.x < min_x || p.x > max_x ||
-        p.y < min_y || p.y > max_y ||
-        p.z < min_z || p.z > max_z)
-    {
-      return false;
-    }
-
-    for (const auto & box : obstacles.boxes) {
-      if (sphere_hits_box(p, radius + margin, box)) {
-        return false;
-      }
-    }
-
-    return true;
-  };
-
-  const auto movement_clear = [&](
-    const geometry_msgs::msg::Point & a,
-    const geometry_msgs::msg::Point & b)
-  {
-    if (!position_clear(a) || !position_clear(b)) {
-      return false;
-    }
-
-    for (const auto & box : obstacles.boxes) {
-      if (segment_hits_box(a, b, radius + margin, box)) {
-        return false;
-      }
-    }
-
-    return true;
-  };
-
-  // Next: create the grid and search through clear movements.
-  if (max_x < min_x || max_y < min_y || !position_clear(start) ||
-      !std::isfinite(goal.x) || !std::isfinite(goal.y) ||
-      !std::isfinite(goal.z))
+  if (max_x < min_x || max_y < min_y ||
+    !std::isfinite(start.x) || !std::isfinite(start.y) || !std::isfinite(start.z) ||
+    !std::isfinite(goal.x) || !std::isfinite(goal.y) || !std::isfinite(goal.z))
   {
     return {};
   }
 
+  const auto distance3 = [](const Point & a, const Point & b) {
+      return std::hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+    };
+
+  // Squared distance from a point to the nearest obstacle box
+  const auto nearest_box_dist2 = [&](const Point & p) {
+      double best = std::numeric_limits<double>::infinity();
+      for (const auto & box : obstacles.boxes) {
+        const double dx = p.x - std::clamp(p.x, box.min.x, box.max.x);
+        const double dy = p.y - std::clamp(p.y, box.min.y, box.max.y);
+        const double dz = p.z - std::clamp(p.z, box.min.z, box.max.z);
+        best = std::min(best, dx * dx + dy * dy + dz * dz);
+      }
+      return best;
+    };
+
+  const auto position_clear = [&](const Point & p) {
+      if (p.x < min_x || p.x > max_x ||
+        p.y < min_y || p.y > max_y ||
+        p.z < min_z || p.z > max_z)
+      {
+        return false;
+      }
+      return nearest_box_dist2(p) > clear_radius * clear_radius;
+    };
+
+  const auto segment_blocked = [&](const Point & a, const Point & b, double r) {
+      for (const auto & box : obstacles.boxes) {
+        if (segment_hits_box(a, b, r, box)) {
+          return true;
+        }
+      }
+      return false;
+    };
+
   // Stop inside the 0.5 m collection radius, leaving some error allowance.
   constexpr double approach_distance = 0.4;
 
-  const auto near_goal = [&](const geometry_msgs::msg::Point & p) {
-    return std::hypot(
-      p.x - goal.x, p.y - goal.y, p.z - goal.z) <= approach_distance;
-  };
+  const auto near_goal = [&](const Point & p) {
+      return distance3(p, goal) <= approach_distance;
+    };
 
   if (near_goal(start)) {
     return Path{start};
@@ -399,29 +402,50 @@ Path Planner::plan_3d(
   const int nz = static_cast<int>(std::floor((max_z - min_z) / step)) + 1;
 
   const size_t total =
-    static_cast<size_t>(nx) * static_cast<size_t>(ny) *
-    static_cast<size_t>(nz);
+    static_cast<size_t>(nx) * static_cast<size_t>(ny) * static_cast<size_t>(nz);
 
   const auto index_of = [&](int x, int y, int z) -> size_t {
-    return (static_cast<size_t>(z) * ny + y) * nx + x;
-  };
+      return (static_cast<size_t>(z) * ny + y) * nx + x;
+    };
 
   const auto point_of = [&](size_t index) {
-    const int x = static_cast<int>(index % nx);
-    const size_t remainder = index / nx;
-    const int y = static_cast<int>(remainder % ny);
-    const int z = static_cast<int>(remainder / ny);
+      const int x = static_cast<int>(index % nx);
+      const size_t remainder = index / nx;
+      const int y = static_cast<int>(remainder % ny);
+      const int z = static_cast<int>(remainder / ny);
 
-    geometry_msgs::msg::Point p;
-    p.x = min_x + x * step;
-    p.y = min_y + y * step;
-    p.z = min_z + z * step;
-    return p;
-  };
+      Point p;
+      p.x = min_x + x * step;
+      p.y = min_y + y * step;
+      p.z = min_z + z * step;
+      return p;
+    };
 
-  // "total" is outside the valid index range and means unvisited.
-  std::vector<size_t> parent(total, total);
-  std::queue<size_t> frontier;
+  // Each node's squared distance to the nearest box is worked out once, when first needed
+  std::vector<double> dist2(total, -1.0);
+  const auto d2_of = [&](size_t index) {
+      if (dist2[index] < 0.0) {
+        dist2[index] = nearest_box_dist2(point_of(index));
+      }
+      return dist2[index];
+    };
+
+  const auto node_clear = [&](size_t index) {
+      return d2_of(index) > clear_radius * clear_radius;
+    };
+
+  // Flying close to a wall costs extra, so routes prefer the middle of doors and rooms
+  const auto move_cost = [&](size_t index, double length) {
+      const double clearance = std::sqrt(std::min(d2_of(index), 4.0));
+      const double penalty =
+        3.0 * std::max(0.0, 0.65 - clearance) / (0.65 - clear_radius);
+      return length * (1.0 + penalty);
+    };
+
+  std::vector<double> best_cost(total, std::numeric_limits<double>::infinity());
+  std::vector<size_t> parent(total, total);  // "total" means not reached
+  using QueueItem = std::pair<double, size_t>;
+  std::priority_queue<QueueItem, std::vector<QueueItem>, std::greater<QueueItem>> frontier;
 
   const int sx = std::clamp(
     static_cast<int>(std::round((start.x - min_x) / step)), 0, nx - 1);
@@ -430,29 +454,49 @@ Path Planner::plan_3d(
   const int sz = std::clamp(
     static_cast<int>(std::round((start.z - min_z) / step)), 0, nz - 1);
 
-  // Connect the exact starting position to nearby clear grid points.
-  // Using several candidates avoids relying on one rounded cell.
-  for (int dz = -1; dz <= 1; ++dz) {
-    for (int dy = -1; dy <= 1; ++dy) {
-      for (int dx = -1; dx <= 1; ++dx) {
-        const int x = sx + dx;
-        const int y = sy + dy;
-        const int z = sz + dz;
+  const bool start_clear = position_clear(start);
 
-        if (x < 0 || x >= nx || y < 0 || y >= ny ||
-            z < 0 || z >= nz)
-        {
-          continue;
-        }
+  // Connect the exact starting position to nearby clear nodes. A start that is too close to
+  // something (the estimate drifted, or the ghost is against furniture) looks a little farther
+  // for a way out instead of giving up.
+  const auto seed_nodes = [&](int reach, bool require_line) {
+      for (int dz = -reach; dz <= reach; ++dz) {
+        for (int dy = -reach; dy <= reach; ++dy) {
+          for (int dx = -reach; dx <= reach; ++dx) {
+            const int x = sx + dx;
+            const int y = sy + dy;
+            const int z = sz + dz;
 
-        const size_t index = index_of(x, y, z);
+            if (x < 0 || x >= nx || y < 0 || y >= ny || z < 0 || z >= nz) {
+              continue;
+            }
 
-        if (movement_clear(start, point_of(index))) {
-          parent[index] = index;
-          frontier.push(index);
+            const size_t index = index_of(x, y, z);
+            if (!node_clear(index)) {
+              continue;
+            }
+
+            const Point node = point_of(index);
+            if (require_line &&
+              segment_blocked(start, node, start_clear ? clear_radius : 0.0))
+            {
+              continue;
+            }
+
+            const double cost = move_cost(index, distance3(start, node));
+            if (cost < best_cost[index]) {
+              best_cost[index] = cost;
+              parent[index] = index;
+              frontier.push({cost, index});
+            }
+          }
         }
       }
-    }
+    };
+
+  seed_nodes(start_clear ? 1 : 2, true);
+  if (frontier.empty()) {
+    seed_nodes(3, false);
   }
 
   const int x_steps[6] = {1, -1, 0, 0, 0, 0};
@@ -462,10 +506,14 @@ Path Planner::plan_3d(
   size_t reached = total;
 
   while (!frontier.empty()) {
-    const size_t current = frontier.front();
+    const auto [cost, current] = frontier.top();
     frontier.pop();
 
-    const auto current_point = point_of(current);
+    if (cost > best_cost[current]) {
+      continue;  // an out-of-date entry
+    }
+
+    const Point current_point = point_of(current);
 
     if (near_goal(current_point)) {
       reached = current;
@@ -483,24 +531,30 @@ Path Planner::plan_3d(
       const int next_z = z + z_steps[direction];
 
       if (next_x < 0 || next_x >= nx ||
-          next_y < 0 || next_y >= ny ||
-          next_z < 0 || next_z >= nz)
+        next_y < 0 || next_y >= ny ||
+        next_z < 0 || next_z >= nz)
       {
         continue;
       }
 
       const size_t next = index_of(next_x, next_y, next_z);
 
-      if (parent[next] != total) {
+      if (!node_clear(next)) {
         continue;
       }
 
-      if (!movement_clear(current_point, point_of(next))) {
+      const double candidate = cost + move_cost(next, step);
+      if (candidate >= best_cost[next]) {
         continue;
       }
 
+      if (segment_blocked(current_point, point_of(next), clear_radius)) {
+        continue;
+      }
+
+      best_cost[next] = candidate;
       parent[next] = current;
-      frontier.push(next);
+      frontier.push({candidate, next});
     }
   }
 
@@ -508,18 +562,34 @@ Path Planner::plan_3d(
     return {};
   }
 
-  Path path;
-
+  // The route as grid nodes, from the exact start
+  Path dense;
   for (size_t current = reached;; current = parent[current]) {
-    path.push_back(point_of(current));
-
+    dense.push_back(point_of(current));
     if (parent[current] == current) {
       break;
     }
   }
+  std::reverse(dense.begin(), dense.end());
+  dense.insert(dense.begin(), start);
 
-  std::reverse(path.begin(), path.end());
-  path.insert(path.begin(), start);
+  // Shortcut: from each waypoint, jump to the farthest later one that can be flown to in a
+  // straight line with some extra room. This turns the grid's staircase into long straight legs
+  constexpr double shortcut_radius = clear_radius + 0.12;
+
+  Path path;
+  path.push_back(dense.front());
+  size_t i = 0;
+  while (i + 1 < dense.size()) {
+    size_t j = dense.size() - 1;
+    while (j > i + 1 && segment_blocked(dense[i], dense[j], shortcut_radius)) {
+      --j;
+    }
+    path.push_back(dense[j]);
+    i = j;
+  }
+
   return path;
 }
+
 }  // namespace ghost_brain

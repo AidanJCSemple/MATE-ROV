@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <optional>
 #include <vector>
 
 #include "geometry_msgs/msg/point.hpp"
@@ -31,8 +32,10 @@ struct TrackedTarget
 {
   geometry_msgs::msg::Point position;
   bool is_person{false};
-  rclcpp::Time last_seen;
-  int id{-1};  // NEW: unique per track, assigned when the track is created
+  rclcpp::Time last_seen;                       // the detection's own stamp
+  rclcpp::Time seen_at{0, 0, RCL_ROS_TIME};     // the brain's clock when it was last seen
+  int id{-1};                                   // unique per track
+  int hits{1};
 };
 
 /// Where the camera sits on the ghost: this far forward, left and up from its center (m)
@@ -49,28 +52,11 @@ constexpr double kCameraUp = 0.1;
 float depth_at(const sensor_msgs::msg::Image & depth, int u, int v);
 
 /**
- * @brief Keeps track of where the people and candy are. This is yours to write!
+ * @brief Keeps track of where the people and candy are.
  *
- * Nobody tells the ghost where anything is. Its camera faces forward with a 120 degree view, and
- * every frame (10 Hz) comes with:
- *  - /camera/detections: a box in the image around each person's head and each candy in view. It
- *    says what it is ("person" or "candy" in results[0].hypothesis.class_id), but not where or
- *    which one
- *  - /camera/depth: how far away every pixel is (32-bit floats, in meters)
- *  - /camera/camera_info: the camera's focal length and center in `k`
- *
- * To place a detection in the house: read the depth at its box, turn the pixel and depth into a
- * point in the camera's frame (the optical frame: x right, y down, z forward), then into the ghost's
- * frame (the camera is mounted kCamera* from its center), then into the map with the ghost's pose.
- * People are collected at their head, which is what their box is around. The depth there is to
- * the front of their head, about 0.2 m nearer than its center. Far away, a box can be under a pixel
- * wide, so its center pixel may miss: the nearest depth inside the box is safer.
- *
- * Some ideas once that works:
- *  - Match each detection to a target you already know about, so you don't count it twice
- *  - Track people's velocity, so you can predict where they're going
- *  - Forget targets when you collect them (the score in /haunted_house/state goes up), or when you
- *    look where one should be and it isn't there
+ * Detections are placed in the map with the depth image and the ghost's pose, matched to tracks
+ * we already know about, and given a unique id. Tracks are removed when the node sees the score
+ * go up, and person tracks expire when they have not been seen for a while.
  */
 class Tracker
 {
@@ -78,17 +64,36 @@ public:
   /// Forget everything. Called at the start of every game
   void reset();
 
+  /// Used by the tests: the brain's clock is not known, so nothing is stamped with it
   void on_detections(
     const vision_msgs::msg::Detection2DArray & detections,
     const sensor_msgs::msg::Image & depth,
     const sensor_msgs::msg::CameraInfo & camera_info,
     const geometry_msgs::msg::Pose & ghost_pose);
 
-  const std::vector<TrackedTarget> & targets() const { return targets_; }
+  /// `now` is the brain's own clock, used to tell how long ago each target was seen
+  void on_detections(
+    const vision_msgs::msg::Detection2DArray & detections,
+    const sensor_msgs::msg::Image & depth,
+    const sensor_msgs::msg::CameraInfo & camera_info,
+    const geometry_msgs::msg::Pose & ghost_pose,
+    const rclcpp::Time & now);
+
+  const std::vector<TrackedTarget> & targets() const {return targets_;}
+
+  /// Remove the nearest track of this kind within max_distance. Returns its id, if any
+  std::optional<int> remove_nearest(
+    bool is_person, const geometry_msgs::msg::Point & near, double max_distance);
+
+  void remove_id(int id);
+  void remove_all(bool is_person);
+
+  /// People move, so a sighting older than max_age_s no longer says where the person is
+  void drop_stale_people(const rclcpp::Time & now, double max_age_s);
 
 private:
   std::vector<TrackedTarget> targets_;
-  int next_id_{0};  // NEW: the ID given to the next new track
+  int next_id_{0};
 };
 
 }  // namespace ghost_brain
