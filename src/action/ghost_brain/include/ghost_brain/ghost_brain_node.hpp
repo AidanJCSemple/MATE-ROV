@@ -39,6 +39,7 @@
 #include "vision_msgs/msg/detection2_d_array.hpp"
 #include "visualization_msgs/msg/marker_array.hpp"
 #include "haunted_house_msgs/msg/box_array.hpp"
+#include <unordered_map>
 
 namespace ghost_brain
 {
@@ -107,8 +108,10 @@ private:
   Path path_;
   std::optional<geometry_msgs::msg::Point> planned_goal_;
   std::optional<int> target_id_;     // NEW: ID of the track we are committed to
-  std::vector<int> skipped_ids_;     // NEW: tracks we reached or could not route to
+  std::unordered_map<int, rclcpp::Time> retry_after_;
   rclcpp::Time last_plan_time_;
+  geometry_msgs::msg::Point progress_position_;
+  rclcpp::Time progress_time_{0, 0, RCL_ROS_TIME};
 
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr velocity_sub_;

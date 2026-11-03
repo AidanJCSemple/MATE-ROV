@@ -161,8 +161,8 @@ void GhostBrainNode::on_state(const haunted_house_msgs::msg::GameState & state)
     path_.clear();
     planned_goal_.reset();
     target_id_.reset();
-    skipped_ids_.clear();
-    RCLCPP_INFO(get_logger(), "New game: back to the start");
+    retry_after_.clear();   
+     RCLCPP_INFO(get_logger(), "New game: back to the start");
   }
   state_ = state;
 }
@@ -185,13 +185,17 @@ std::optional<TrackedTarget> GhostBrainNode::choose_target() const
   }
 
   const auto here = localizer_.pose().position;
+  const auto current_time = now();
   std::optional<TrackedTarget> best;
   double best_distance = std::numeric_limits<double>::infinity();
 
   for (const auto & target : tracker_.targets()) {
-    if (std::find(skipped_ids_.begin(), skipped_ids_.end(), target.id) != skipped_ids_.end()) {
+    const auto retry = retry_after_.find(target.id);
+
+    if (retry != retry_after_.end() && current_time < retry->second) {
       continue;
     }
+
     const double d = distance(here, target.position);
     if (d < best_distance) {
       best = target;
@@ -208,7 +212,9 @@ void GhostBrainNode::update()
   if (start_pose_) {
     publish_pose();
   }
-  if (!start_pose_ || !map_ || !state_ || state_->phase != GameState::RUNNING) {
+  if (!start_pose_ || !map_ || !obstacles_ || !state_ ||
+      state_->phase != GameState::RUNNING)
+  {
     publish_command(geometry_msgs::msg::Twist{});
     return;
   }
@@ -231,8 +237,18 @@ void GhostBrainNode::update()
   }
 
   // Treat a target as reached once we are close to it, and move on
-  if (target && distance(here, target->position) < 0.4) {
-    skipped_ids_.push_back(target->id);
+  // Estimated arrival is not proof of collection.
+  // Release this target temporarily so we can pursue another.
+  const bool at_endpoint =
+    !path_.empty() &&
+    distance(here, path_.back()) < 0.05;
+
+  if (target &&
+      (distance(here, target->position) < 0.4 || at_endpoint))
+  {
+    retry_after_.insert_or_assign(
+      target->id, now() + rclcpp::Duration::from_seconds(5.0));
+
     target_id_.reset();
     planned_goal_.reset();
     path_.clear();
@@ -264,7 +280,8 @@ void GhostBrainNode::update()
   // Plan for a new target, and now and then anyway, because people keep walking
   const bool new_goal = !planned_goal_;
   if (new_goal || now() - last_plan_time_ >= replan_period_) {
-    path_ = planner_.plan(here, target->position, *map_);
+      path_ = planner_.plan_3d(
+      here, target->position, *map_, *obstacles_);
 
     RCLCPP_INFO(
       get_logger(),
@@ -277,8 +294,9 @@ void GhostBrainNode::update()
 
     if (path_.empty()) {
       // Unreachable (or the endpoints were rejected): give up on this one
-      skipped_ids_.push_back(target->id);
-      target_id_.reset();
+      // Try other targets now, but allow this one to be retried later.
+      retry_after_.insert_or_assign(
+        target->id, now() + rclcpp::Duration::from_seconds(5.0));      target_id_.reset();
       planned_goal_.reset();
       publish_path();
       publish_command(geometry_msgs::msg::Twist{});
@@ -411,7 +429,7 @@ void GhostBrainNode::release_resources()
   path_.clear();
   planned_goal_.reset();
   target_id_.reset();
-  skipped_ids_.clear();
+  retry_after_.clear();
 }
 
 }  // namespace ghost_brain
