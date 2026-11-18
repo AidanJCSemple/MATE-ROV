@@ -22,3 +22,7 @@ models/
 # The Gazebo sim's vehicle model, not ML weights
 !src/simulation/rov_gazebo_sim/models/
 maps/
+
+build/
+install/
+log/
