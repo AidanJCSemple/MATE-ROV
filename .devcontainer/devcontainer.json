@@ -1,0 +1,7 @@
+{
+  "name": "rov-sim",
+  "build": { "dockerfile": "Dockerfile" },
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "forwardPorts": [8765]
+}
