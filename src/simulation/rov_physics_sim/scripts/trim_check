@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+# Copyright (c) 2025-present WATonomous. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""M1 acceptance check: does the ROV come to rest where its hydrostatics say it should?
+
+Run it while the sim is up. It watches /sim/ground_truth, lets the vehicle settle, then compares
+the average depth, roll and pitch over the last few seconds with the values computed from
+config/vehicle.yaml. Exits 0 on a pass, 1 on a fail, so it can run in CI later.
+
+Usage: ros2 run rov_physics_sim trim_check [--settle 30] [--window 5] [--config vehicle.yaml]
+"""
+
+import argparse
+import math
+import os
+import sys
+
+import rclpy
+from ament_index_python.packages import get_package_share_directory
+from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from rov_physics_sim.vehicle import Vehicle
+
+
+def roll_pitch(q):
+    roll = math.atan2(2 * (q.w * q.x + q.y * q.z), 1 - 2 * (q.x * q.x + q.y * q.y))
+    pitch = math.asin(max(-1.0, min(1.0, 2 * (q.w * q.y - q.z * q.x))))
+    return roll, pitch
+
+
+class TrimCheck(Node):
+    def __init__(self, args):
+        super().__init__("trim_check")
+        self.args = args
+        self.start = None
+        self.samples = []  # (t, z, roll, pitch)
+        self.done = False
+        self.create_subscription(Odometry, args.topic, self.on_odom, 10)
+        self.get_logger().info(
+            f"Waiting {args.settle + args.window:.0f} s of sim time on {args.topic}"
+        )
+
+    def on_odom(self, msg):
+        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if self.start is None:
+            self.start = t
+        if t - self.start >= self.args.settle:
+            p = msg.pose.pose
+            self.samples.append((t, p.position.z, *roll_pitch(p.orientation)))
+        if t - self.start >= self.args.settle + self.args.window:
+            self.done = True
+
+
+def main():
+    default = os.path.join(
+        get_package_share_directory("rov_physics_sim"), "config", "vehicle.yaml"
+    )
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("--config", default=default)
+    ap.add_argument("--topic", default="/sim/ground_truth")
+    ap.add_argument(
+        "--settle",
+        type=float,
+        default=30.0,
+        help="sim seconds to wait before measuring",
+    )
+    ap.add_argument(
+        "--window", type=float, default=5.0, help="sim seconds to average over"
+    )
+    ap.add_argument("--z-tol", type=float, default=0.02, help="allowed depth error (m)")
+    ap.add_argument(
+        "--angle-tol", type=float, default=2.0, help="allowed roll/pitch error (deg)"
+    )
+    ap.add_argument(
+        "--still-tol",
+        type=float,
+        default=0.01,
+        help="allowed depth swing in the window (m)",
+    )
+    args, ros_args = ap.parse_known_args()
+
+    vehicle = Vehicle.from_file(args.config)
+    waterline = vehicle.waterline()
+    exp_roll, exp_pitch = vehicle.submerged_trim()
+
+    rclpy.init(args=ros_args)
+    node = TrimCheck(args)
+    while rclpy.ok() and not node.done:
+        rclpy.spin_once(node, timeout_sec=0.5)
+    node.destroy_node()
+    rclpy.shutdown()
+
+    zs = [s[1] for s in node.samples]
+    z = sum(zs) / len(zs)
+    roll = math.degrees(sum(s[2] for s in node.samples) / len(zs))
+    pitch = math.degrees(sum(s[3] for s in node.samples) / len(zs))
+    swing = max(zs) - min(zs)
+
+    checks = []
+    if waterline is None:
+        checks.append(("sinks to the floor", z < -1.0, f"z = {z:+.3f} m"))
+    else:
+        checks.append(
+            (
+                "floats at its waterline",
+                abs(z + waterline) <= args.z_tol,
+                f"z = {z:+.3f} m, expected {-waterline:+.3f} +/- {args.z_tol}",
+            )
+        )
+    checks.append(
+        (
+            "roll",
+            abs(roll - math.degrees(exp_roll)) <= args.angle_tol,
+            f"{roll:+.2f} deg, expected {math.degrees(exp_roll):+.2f} +/- {args.angle_tol}",
+        )
+    )
+    checks.append(
+        (
+            "pitch",
+            abs(pitch - math.degrees(exp_pitch)) <= args.angle_tol,
+            f"{pitch:+.2f} deg, expected {math.degrees(exp_pitch):+.2f} +/- {args.angle_tol}",
+        )
+    )
+    checks.append(
+        (
+            "settled",
+            swing <= args.still_tol,
+            f"depth swing {swing * 1000:.1f} mm over {args.window:.0f} s",
+        )
+    )
+
+    for name, ok, detail in checks:
+        print(f"{'PASS' if ok else 'FAIL'}  {name:<24} {detail}")
+    sys.exit(0 if all(ok for _, ok, _ in checks) else 1)
+
+
+if __name__ == "__main__":
+    main()

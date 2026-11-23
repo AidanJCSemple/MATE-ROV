@@ -1,0 +1,31 @@
+# The pool world and the team's launch station. The world is generated from this file at launch.
+#
+# Frame: world. Water surface at z = 0, x along the pool's length, y across it, origin at the
+# centre of the surface. Same surface convention as rov_gazebo_sim.
+#
+# MATE (Matt Gardner, Nov 2026): the PIONEER pool isn't chosen yet; plan for the deeper diving
+# well. Teams launch from stations along a pool wall; end stations may have a sidewall on one
+# side, middle stations none. Station sizes arrive with the Prop Building Instructions
+# (Jan/Feb 2027), so the station numbers below are guesses.
+
+---
+pool:  # Weyerhaeuser King County Aquatic Center, diving well
+  length: 22.86
+  width: 15.54
+  depth: 5.18
+  wall_thickness: 0.3
+  freeboard: 0.3  # wall height above the water
+
+station:
+  wall: west          # the pool wall the station sits on: west (-x), east, south (-y), north
+  offset: 0.0         # along that wall, from its centre (m)
+  width: 3.0          # distance between the two sidewall positions (m)
+  sidewall_length: 3.0  # how far a sidewall reaches into the pool (m)
+  sidewall_thickness: 0.1
+  sidewall_depth: full  # "full" (to the floor) or a depth in metres
+
+# Where the ROV starts, relative to the station: `standoff` metres out from the wall, centred
+# between the sidewalls, facing into the pool. z is overridden by the spawn_z launch argument.
+spawn:
+  standoff: 0.6
+  z: 0.0

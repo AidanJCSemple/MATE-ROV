@@ -1,0 +1,24 @@
+---
+# Topics bridged between Gazebo and ROS (ros_gz_bridge).
+# Thruster commands (ROS -> Gazebo) arrive in M2, once the real robot's topic is agreed.
+
+- ros_topic_name: "/clock"
+  gz_topic_name: "/clock"
+  ros_type_name: "rosgraph_msgs/msg/Clock"
+  gz_type_name: "gz.msgs.Clock"
+  direction: GZ_TO_ROS
+
+# Where the ROV really is: pose in the world frame (surface at z = 0) and body-frame velocity.
+# Same topic name as rov_gazebo_sim, so rov_mission_runner can score against either sim.
+- ros_topic_name: "/sim/ground_truth"
+  gz_topic_name: "/model/rov/odometry"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
+  direction: GZ_TO_ROS
+
+# world -> base_link, so Foxglove's 3D panel can follow the ROV.
+- ros_topic_name: "/tf"
+  gz_topic_name: "/model/rov/tf"
+  ros_type_name: "tf2_msgs/msg/TFMessage"
+  gz_type_name: "gz.msgs.Pose_V"
+  direction: GZ_TO_ROS

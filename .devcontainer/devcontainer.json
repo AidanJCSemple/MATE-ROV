@@ -3,5 +3,14 @@
   "build": { "dockerfile": "Dockerfile" },
   "workspaceFolder": "/workspace",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
-  "forwardPorts": [8765]
+  // 8766: the sim's Foxglove bridge. 8765 is left to infrastructure_bringup and rov_gazebo_sim.
+  "forwardPorts": [8766],
+  "containerEnv": {
+    // Match watod's ROS_DOMAIN_ID (your UID % 230) to share topics with the team's containers.
+    // Zenoh keeps domains apart, so a mismatch means the two sides simply don't see each other.
+    "ROS_DOMAIN_ID": "${localEnv:ROS_DOMAIN_ID:0}"
+  }
+  // To join a running watod stack (its Zenoh router and Foxglove bridge), add
+  //   "runArgs": ["--network=host"]
+  // and launch with zenoh_router:=false foxglove:=false. See the package README.
 }
